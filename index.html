@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <title>icepack</title>
+        <link rel="stylesheet" href="./css/reveal.css">
+        <link rel="stylesheet" href="./css/theme/solarized.css" id="theme">
+        <link rel="stylesheet" href="./css/highlight/zenburn.css">
+        <link rel="stylesheet" href="./css/print/paper.css" type="text/css" media="print">
+
+    </head>
+    <body>
+
+        <div class="reveal">
+            <div class="slides"><section ><section data-markdown><script type="text/template">
+
+# Ice sheet modeling and Nitsche's method
+</script></section><section data-markdown><script type="text/template">
+### Contents
+
+* Glacier physics and `icepack`
+* Boundary conditions, motivation
+* Nitsche's method for the Poisson problem
+* That dastardly constant
+* Nitsche's method for Lid-driven Stokes flow
+</script></section></section><section ><section data-markdown><script type="text/template">
+## Physics of glaciers
+
+* Glaciers flow like a slow, viscous fluid.
+* But unlike most fluids, ice is non-Newtonian.
+* Cast of characters:
+  - $u$, $p$: ice velocity and pressure
+  - $\rho$, $g$: density and gravitational acceleration vector
+  - $\tau$, $\dot\varepsilon$: stress and strain rate tensors (rank 2)
+</script></section><section data-markdown><script type="text/template">
+### The Stokes equations
+
+* Total stress balance:
+$$\nabla\cdot\tau - \nabla p + \rho g = 0$$
+* Incompressibility:
+$$\nabla\cdot u = 0$$
+* Constitutive relation (Glen's flow law):
+$$\dot\varepsilon = A\tau^n$$
+where empirically $n = 3$.
+</script></section><section data-markdown><script type="text/template">
+### Simpler models
+
+* Two approximations:
+  - Very low aspect ratio; $H/L \ll 1$
+  - In fast-flowing areas, $\tau\_{xz} / \tau\_{xx} \ll 1$
+* To order 0, the Stokes equations simplify to:
+  - a 2D elliptic equation for the velocity
+  - a conservative advection equation for thickness
+</script></section><section data-markdown><script type="text/template">
+### icepack
+
+* All glaciologists need to use models at some point.
+* Existing packages (Elmer, ISSM, PISM, etc.) are very effective in the hands of experts.
+* Not everyone is an expert.
+I wanted to write something that glaciologists could pick up easily.
+
+[icepack.github.io](https://icepack.github.io)
+</script></section><section data-markdown><script type="text/template">
+### Research questions
+
+* Some questions in glaciology that people want to answer with models:
+  - What will global sea level be in 100 years?
+  - Given some observations of the surface of a glacier, what's going on underneath?
+  - What controls the rate of iceberg calving?
+  - How big were the ice sheets 12k+ years ago?
+</script></section></section><section ><section data-markdown><script type="text/template">
+## Friction boundary conditions
+
+* Grounded glaciers slide over bedrock.
+* BCs are a mix of Dirichlet and Robin:
+$$\begin{align}u \cdot \nu & = 0 \\\\ (I - \nu\nu^\*)\sigma\nu & = -Cu \end{align}$$
+* Same BC for side wall friction in a narrow fjord.
+</script></section><section data-markdown><script type="text/template">
+<img src="helheim.png" height="85%" width="85%">
+</script></section><section data-markdown><script type="text/template">
+<img src="helheim-log10-speed.png" height="85%" width="85%">
+</script></section><section data-markdown><script type="text/template">
+### The problem
+
+* **How should we impose friction BCs?**
+* We can do so directly in firedrake if the mesh boundaries are aligned with the coordinates.
+* For general boundaries, we can't eliminate a DoF without also defining $\nu$ at the mesh nodes!
+</script></section><section data-markdown><script type="text/template">
+### Motivation
+
+* In this talk I'll describe **Nitsche's method** for enforcing essential BCs.
+* Nitsche's method is used in:
+  - domain decomposition
+  - discontinuous Galerkin
+  - multi-physics coupling
+* But first, let's demonstrate on something simpler...
+</script></section></section><section ><section data-markdown><script type="text/template">
+## Poisson problem
+
+* Variational form:
+$$\begin{align}u & = \min\int\_\Omega\left(\frac{1}{2}k|\nabla u|^2 - fu\right)dx, \\\\
+u|\_{\partial\Omega} & = g.\end{align}$$
+* The usual approach is to eliminate the constraint.
+* This is possible for the Poisson problem, but for other constrained problems it isn't.
+</script></section><section data-markdown><script type="text/template">
+### The penalty method
+
+* Instead, we can penalize:
+$$J\_\eta(u) = J(u) + \int\_{\partial\Omega}\frac{\eta}{2}(u - g)^2ds$$
+* Equivalent to the boundary condition
+$$-k\frac{\partial u}{\partial\nu} = \eta(u - g)$$
+* In the limit as $\eta\to\infty$, $u|\_{\partial\Omega}\to g$.
+</script></section><section data-markdown><script type="text/template">
+### Problems
+
+* The linear system is ill-conditioned as $\eta\to\infty$.
+* The convergence rate is sub-optimal.
+</script></section><section data-markdown><script type="text/template">
+### The Lagrange multiplier method
+
+* We could instead try a Lagrange multiplier $\lambda$:
+$$L(u, \lambda) = J(u) - \int\_{\partial\Omega}\lambda(u - g)ds$$
+* Equivalent to the BC:
+$$k\frac{\partial u}{\partial\nu} = \lambda.$$
+</script></section><section data-markdown><script type="text/template">
+### Problems
+
+* We have to pick a discrete function space $\Lambda$ for the Lagrange multiplier.
+* Really hard to find a pair that satisfies a discrete inf-sup condition (see Pitkäranta 84, 86, 87).
+</script></section><section data-markdown><script type="text/template">
+### Augmented Lagrangian method
+
+* Take a page from the optimization book:
+$$L\_\eta(u, \lambda) = J(u) - \int\_{\partial\Omega}\lambda(u - g)ds + \int\_{\partial\Omega}\frac{\eta}{2}(u - g)^2ds$$
+* $\eta$ large enough $\Rightarrow$ stability, regardless of $\Lambda$.
+* Large enough $\ll \infty.$
+</script></section><section data-markdown><script type="text/template">
+### Look ma, no $\lambda$s
+
+* Thanks to weak forms, we can eliminate $\lambda$!
+* Recall that, for the Lagrange multiplier method, we could use the strong form to show that
+$$\lambda = k\frac{\partial u}{\partial\nu}.$$
+* We can substitute this in to the augmented Lagrangian to arrive at:
+</script></section><section data-markdown><script type="text/template">
+### Nitsche's method
+
+$$J\_\eta(u) = J(u) - \int\_{\partial\Omega}k\frac{\partial u}{\partial n}(u - g)ds + \int\_{\partial\Omega}\frac{\eta}{2}(u - g)^2ds$$
+
+* This method is consistent with the original problem.
+* The resulting linear system is symmetric.
+</script></section></section><section ><section data-markdown><script type="text/template">
+## Can't stop here, this is bat country
+
+* The linear system will only be positive-definite if $\eta$ is large enough; how large is that?
+* Based on the units, $[\eta] = [k]/[\text{length}]$.
+* Let $h = $ face diameter; we'll assume
+$$\eta = \frac{\gamma k}{h}$$
+and try to find the dimensionless $\gamma$.
+</script></section><section data-markdown><script type="text/template">
+### Inverse inequality
+
+* Suppose that $q \in CG(\Omega, p)$ or $DG(\Omega, p)$.
+* Theorem: there's a constant $C(d, p, \theta)$ such that
+
+$$\int\_{\partial\Omega}hkq^2ds \le C(d, p, \theta)\frac{\max k}{\min k}\int\_\Omega kq^2dx.$$
+</script></section><section data-markdown><script type="text/template">
+### "By a theorem of Cauchy..." said every proof ever
+
+* First we'll use Young's inequality:
+$$\left|2\int\_{\partial\Omega}k\frac{\partial v}{\partial\nu}v ds\right| \le \int\_{\partial\Omega}\Bigg(\underbrace{\epsilon h k\left(\frac{\partial v}{\partial n}\right)^2}\_{(1)} + \underbrace{\frac{k}{\epsilon h}v^2}\_{(2)}\Bigg)ds$$
+* Using the inverse inequality,
+$$(1) \le d\cdot C(d, p - 1, \theta)\cdot\frac{\max k}{\min k}\cdot\int\_\Omega k|\nabla v|^2dx.$$
+</script></section><section data-markdown><script type="text/template">
+* ...a few more steps, and we get that:
+$$\gamma > d\cdot C(d, p - 1, \theta)\cdot\frac{\max k}{\min k}$$
+* If we want to implement this, we need to know roughly what $C$ is!
+</script></section><section data-markdown><script type="text/template">
+### What's the constant?
+
+* Let $q$ be a $p$-degree polynomial on the $d$-simplex $D$;
+$$\\|q\\|\_{\partial D}^2 \le \frac{(p + 1)(p + d)}{d}\cdot\frac{|\partial D|}{|D|}\cdot\\|q\\|\_D^2$$
+* Proof in Warburton and Hesthaven 2003, surprisingly readable!
+</script></section><section data-markdown><script type="text/template">
+* The algorithms used in gmsh and Triangle give worst-case minimum angles greater than 26${}^\circ$.
+* Using the law of sines + some trigonometry:
+$$|D|/|\partial D| \le \sin\theta\cdot\tan(\theta/2)\cdot h/2.$$
+</script></section></section><section ><section data-markdown><script type="text/template">
+## Stokes flow
+
+* Our model problem will be lid-driven flow:
+$$\begin{align}
+J(u, p) & = \int\_\Omega\left(\mu\dot\varepsilon(u):\dot\varepsilon(u) - p\nabla\cdot u\right)dx \\\\
+& \qquad + \int\_{\partial\Omega}\frac{\kappa}{2}|(I - \nu\nu^\*)u - u\_\kappa|^2ds
+\end{align}$$
+subject to $u\cdot\nu = 0$ on $\partial\Omega$.
+* How can we use Nitsche's method for this problem?
+</script></section><section data-markdown><script type="text/template">
+### Nitsche method
+
+* If we used Lagrange multipliers, we would find that
+$$\lambda = \nu\cdot \sigma\nu.$$
+* Substitute this into an augmented Lagrangian:
+$$\begin{align}
+J\_\gamma(u, p) & = J(u, p) - \int\_{\partial\Omega}(\nu\cdot\sigma\nu)(u\cdot\nu)ds \\\\
+& \qquad + \int\_{\partial\Omega}\frac{\gamma\mu}{2h}(u\cdot\nu)^2ds
+\end{align}$$
+* Same idea as before to pick $\gamma$.
+</script></section></section><section ><section data-markdown><script type="text/template">
+## Conclusion
+
+* Implementation in firedrake was easy -- I only had to go under the hood to compute the minimum angle.
+* By contrast, Elmer does tricky business to define $\nu$ on the nodes.
+</script></section><section data-markdown><script type="text/template">
+### Some things that could be fun or maybe horrible
+
+* **Anisotropy**: Come up with sharper bounds for $\gamma$ when both the mesh and $k$ are highly anisotropic.
+* **Nonlinearity**: Try this for the p-Laplace problem,
+$$J(u) = \frac{p}{p + 1}\int\_\Omega k|\nabla u|^{1 + \frac{1}{p}}dx$$
+* **Inverse problems**: Estimate $k$ from $u$ and $g$, using both methods for the forward solve.
+</script></section></section></div>
+        </div>
+
+        <script src="./lib/js/head.min.js"></script>
+        <script src="./js/reveal.js"></script>
+
+        <script>
+            function extend() {
+              var target = {};
+              for (var i = 0; i < arguments.length; i++) {
+                var source = arguments[i];
+                for (var key in source) {
+                  if (source.hasOwnProperty(key)) {
+                    target[key] = source[key];
+                  }
+                }
+              }
+              return target;
+            }
+
+            // Optional libraries used to extend on reveal.js
+            var deps = [
+              { src: './lib/js/classList.js', condition: function() { return !document.body.classList; } },
+              { src: './plugin/markdown/marked.js', condition: function() { return !!document.querySelector('[data-markdown]'); } },
+              { src: './plugin/markdown/markdown.js', condition: function() { return !!document.querySelector('[data-markdown]'); } },
+              { src: './plugin/highlight/highlight.js', async: true, callback: function() { hljs.initHighlightingOnLoad(); } },
+              { src: './plugin/zoom-js/zoom.js', async: true },
+              { src: './plugin/notes/notes.js', async: true },
+              { src: './plugin/math/math.js', async: true }
+            ];
+
+            // default options to init reveal.js
+            var defaultOptions = {
+              controls: true,
+              progress: true,
+              history: true,
+              center: true,
+              transition: 'default', // none/fade/slide/convex/concave/zoom
+              dependencies: deps
+            };
+
+            // options from URL query string
+            var queryOptions = Reveal.getQueryHash() || {};
+
+            var options = {"transition":"fade"};
+            options = extend(defaultOptions, options, queryOptions);
+        </script>
+
+
+        <script>
+            Reveal.initialize(options);
+        </script>
+    </body>
+</html>
